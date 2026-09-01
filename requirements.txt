@@ -1,0 +1,3 @@
+# Compatibility entry point for existing development instructions.
+# Prefer: python -m pip install -e ".[dev]"
+-r requirements.lock

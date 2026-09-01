@@ -1,0 +1,25 @@
+# Optional development configuration. Installed builds use
+# %LOCALAPPDATA%\YFPhoneCam\settings.toml.
+
+[capture]
+width = 1280
+height = 720
+fps = 30
+jpeg_quality = 80
+camera_id = ""
+
+[image]
+zoom = 1.0
+rotation = 0
+mirror = false
+
+[device]
+serial = ""
+adb_path = ""
+
+[app]
+port = 8000
+auto_launch_phone_browser = true
+update_check_enabled = true
+last_update_check = 0
+restart_adb_server = false

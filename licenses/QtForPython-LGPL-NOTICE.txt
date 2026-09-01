@@ -1,0 +1,19 @@
+Qt for Python / PySide6 is used under the GNU Lesser General Public License,
+version 3 (LGPL-3.0-only).
+
+Copyright (C) The Qt Company Ltd. and other contributors.
+
+YFPhoneCam dynamically links to the unmodified Qt libraries, which remain as
+separate DLL files in the application directory. You may replace those files
+with compatible builds of the same Qt major version, debug or reverse engineer
+that linkage for the purpose of modifying Qt, and obtain the corresponding Qt
+source from:
+
+https://code.qt.io/cgit/pyside/pyside-setup.git/
+https://code.qt.io/cgit/qt/
+
+The complete LGPL version 3 text is available at:
+https://www.gnu.org/licenses/lgpl-3.0.txt
+
+Nothing in the YFPhoneCam license restricts rights granted by the LGPL for the
+Qt libraries.

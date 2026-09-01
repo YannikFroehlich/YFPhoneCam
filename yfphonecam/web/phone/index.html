@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>YFPhoneCam</title>
+  <link rel="stylesheet" href="/phone.css" />
+</head>
+<body>
+  <h1>YFPhoneCam</h1>
+  <p id="status" class="status">Initializing…</p>
+
+  <video id="localVideo" autoplay playsinline muted></video>
+
+  <div class="controls">
+    <select id="cameraSelect"></select>
+    <div class="buttons">
+      <button id="startBtn">Start camera</button>
+      <button id="stopBtn" disabled>Stop</button>
+    </div>
+  </div>
+
+  <p class="hint">
+    Keep the screen on and this tab open while using the camera.
+  </p>
+
+  <script src="/phone.js"></script>
+</body>
+</html>

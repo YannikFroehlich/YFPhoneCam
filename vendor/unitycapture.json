@@ -1,0 +1,8 @@
+{
+  "repository": "https://github.com/schellingb/UnityCapture",
+  "commit": "3ed54c325e0ad71afcf4f246c07e5e17b3d7f2d2",
+  "files": {
+    "UnityCaptureFilter32.dll": "aa3ebdf03dea7f3aab3dd7b724751f49ed71672256b57c6a19aa6809cabf30ba",
+    "UnityCaptureFilter64.dll": "72812f5363d8ecb45632253f8c8c888844b1b62e27616f3c8cc21064ccde25e5"
+  }
+}
