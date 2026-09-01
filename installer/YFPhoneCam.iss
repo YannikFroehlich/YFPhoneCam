@@ -53,7 +53,7 @@ Name: "{group}\Uninstall YFPhoneCam"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\YFPhoneCam"; Filename: "{app}\YFPhoneCam.exe"; WorkingDir: "{app}"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\YFPhoneCam.exe"; Description: "Launch YFPhoneCam"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\YFPhoneCam.exe"; Description: "Launch YFPhoneCam"; Flags: nowait postinstall skipifsilent runasoriginaluser
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{localappdata}\YFPhoneCam"
