@@ -1,4 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
+import os
+import sys
 from pathlib import Path
 
 root = Path.cwd()
@@ -27,6 +29,32 @@ a = Analysis(
     noarchive=False,
     optimize=1,
 )
+
+# PyInstaller also searches PATH when resolving native dependencies. Build hosts
+# can add unrelated tool directories there (for example Poppler or libheif), and
+# an incompatible DLL with a familiar name can then silently enter the package.
+# Only accept binaries supplied by this project, its Python environment, the
+# base Python installation, or Windows itself.
+trusted_binary_roots = tuple(
+    path.resolve()
+    for path in (
+        root,
+        Path(sys.prefix),
+        Path(sys.base_prefix),
+        Path(os.environ["SystemRoot"]),
+    )
+)
+
+
+def is_trusted_binary(entry):
+    source = Path(entry[1]).resolve()
+    trusted = any(source == base or base in source.parents for base in trusted_binary_roots)
+    if not trusted:
+        print(f"Excluding untrusted PATH binary: {entry[0]} <- {source}")
+    return trusted
+
+
+a.binaries = [entry for entry in a.binaries if is_trusted_binary(entry)]
 pyz = PYZ(a.pure)
 
 exe = EXE(

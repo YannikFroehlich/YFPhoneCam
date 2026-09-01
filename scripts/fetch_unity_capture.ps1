@@ -15,17 +15,28 @@ foreach ($entry in $manifest.files.PSObject.Properties) {
     $url = "https://raw.githubusercontent.com/schellingb/UnityCapture/$($manifest.commit)/Install/$fileName"
     $temporary = "$target.download"
 
+    if (Test-Path -LiteralPath $target) {
+        $existingHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $target).Hash.ToLowerInvariant()
+        if ($existingHash -eq $expectedHash.ToLowerInvariant()) {
+            Write-Host "Verified $fileName ($existingHash)"
+            continue
+        }
+    }
+
     try {
         Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $temporary -MaximumRedirection 3
         $length = (Get-Item -LiteralPath $temporary).Length
         if ($length -lt 50000 -or $length -gt 1048576) {
-            throw "Unexpected Unity Capture file size for $fileName: $length bytes"
+            throw "Unexpected Unity Capture file size for ${fileName}: $length bytes"
         }
         $actualHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $temporary).Hash.ToLowerInvariant()
         if ($actualHash -ne $expectedHash.ToLowerInvariant()) {
             throw "SHA-256 mismatch for $fileName (expected $expectedHash, got $actualHash)"
         }
-        Move-Item -Force -LiteralPath $temporary -Destination $target
+        # Windows PowerShell 5.1's Move-Item -Force cannot replace an existing
+        # file. Copy only after the download has passed its size and hash checks;
+        # the temporary file is removed by the finally block below.
+        Copy-Item -Force -LiteralPath $temporary -Destination $target
         Write-Host "Verified $fileName ($actualHash)"
     }
     finally {

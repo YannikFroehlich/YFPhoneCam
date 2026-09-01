@@ -8,7 +8,6 @@ from dataclasses import replace
 
 from .config import Settings, load_settings, validate_settings
 from .logging_setup import setup_logging
-from .orchestrator import Orchestrator
 from .version import __version__
 
 
@@ -19,6 +18,7 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--version", action="version", version=__version__)
     parser.add_argument("--headless", action="store_true", help="Run without the desktop UI.")
+    parser.add_argument("--gui-smoke-test", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--port", type=int, help="Preferred localhost server port.")
     parser.add_argument("--width", type=int, choices=(640, 1280, 1920))
     parser.add_argument("--height", type=int, choices=(480, 720, 1080))
@@ -59,6 +59,10 @@ def _apply_cli(settings: Settings, args: argparse.Namespace) -> Settings:
 
 
 def _run_headless(settings: Settings) -> int:
+    # Keep the native backend out of lightweight CLI paths and let the GUI own
+    # its Qt-before-backend import order.
+    from .orchestrator import Orchestrator
+
     try:
         asyncio.run(Orchestrator(settings).run_forever())
     except KeyboardInterrupt:
@@ -71,10 +75,23 @@ def _run_headless(settings: Settings) -> int:
     return 0
 
 
+def _run_gui_smoke_test() -> int:
+    """Load Qt and create its platform integration for release-build verification."""
+    from PySide6.QtWidgets import QApplication
+
+    app = QApplication.instance()
+    if app is None:
+        app = QApplication(["YFPhoneCam", "--gui-smoke-test"])
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     setup_logging()
     settings = validate_settings(_apply_cli(load_settings(), args))
+
+    if args.gui_smoke_test:
+        return _run_gui_smoke_test()
 
     if args.headless:
         return _run_headless(settings)

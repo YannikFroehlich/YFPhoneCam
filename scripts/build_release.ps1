@@ -22,6 +22,28 @@ if ($LASTEXITCODE -ne 0) { throw "Tests failed." }
 & $python -m PyInstaller packaging/YFPhoneCam.spec --noconfirm --clean
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed." }
 
+$frozenExecutable = Join-Path $repositoryRoot "dist\YFPhoneCam\YFPhoneCam.exe"
+$previousQtPlatform = $env:QT_QPA_PLATFORM
+try {
+    $env:QT_QPA_PLATFORM = "offscreen"
+    $smokeArguments = @{
+        FilePath = $frozenExecutable
+        ArgumentList = "--gui-smoke-test"
+        WorkingDirectory = Split-Path -Parent $frozenExecutable
+        WindowStyle = "Hidden"
+        Wait = $true
+        PassThru = $true
+    }
+    $smokeTest = Start-Process @smokeArguments
+    if ($smokeTest.ExitCode -ne 0) {
+        throw "Frozen GUI smoke test failed with exit code $($smokeTest.ExitCode)."
+    }
+}
+finally {
+    $env:QT_QPA_PLATFORM = $previousQtPlatform
+}
+Write-Host "Frozen GUI smoke test passed."
+
 $version = & $python -c "from yfphonecam.version import __version__; print(__version__)"
 $isccCandidates = @(
     "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
