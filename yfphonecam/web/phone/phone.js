@@ -21,7 +21,7 @@ let encodeMsTotal = 0;
 let encodeSamples = 0;
 
 const canvas = document.createElement("canvas");
-const context = canvas.getContext("2d", { alpha: false });
+const context = canvas.getContext("2d", { alpha: false, willReadFrequently: true });
 
 function setStatus(text, kind = "") {
   $("status").textContent = text;
