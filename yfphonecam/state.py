@@ -49,6 +49,7 @@ class AppState:
         self.dropped_backpressure_frames = 0
         self.avg_encode_ms: float | None = None
         self.buffered_amount_bytes = 0
+        self.capture_mode: str | None = None
         self.decoded_frames = 0
 
         self.adb_devices: list[dict[str, str]] = []
@@ -141,6 +142,7 @@ class AppState:
         dropped_backpressure: int = 0,
         avg_encode_ms: float | None = None,
         buffered_amount: int = 0,
+        capture_mode: str | None = None,
     ) -> None:
         with self._lock:
             self.captured_frames = max(0, captured)
@@ -150,6 +152,7 @@ class AppState:
             self.dropped_backpressure_frames = max(0, dropped_backpressure)
             self.avg_encode_ms = avg_encode_ms
             self.buffered_amount_bytes = max(0, buffered_amount)
+            self.capture_mode = capture_mode
 
     def set_virtualcam_status(
         self, active: bool, backend: str | None = None, error: str | None = None
@@ -195,6 +198,7 @@ class AppState:
                 if self.avg_encode_ms is not None
                 else None,
                 "buffered_amount_bytes": self.buffered_amount_bytes,
+                "capture_mode": self.capture_mode,
                 "decoded_frames": self.decoded_frames,
                 "virtualcam_active": self.virtualcam_active,
                 "virtualcam_backend": self.virtualcam_backend,

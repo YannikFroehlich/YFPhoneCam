@@ -12,6 +12,7 @@ const LABELS = {
   dropped_backpressure_frames: "  - dropped (network backlog)",
   avg_encode_ms: "Avg phone encode time (ms)",
   buffered_amount_bytes: "WebSocket send backlog (bytes)",
+  capture_mode: "Phone capture mode",
   decoded_frames: "Decoded frames",
   virtualcam_active: "Virtual camera active",
   virtualcam_backend: "Virtual camera backend",

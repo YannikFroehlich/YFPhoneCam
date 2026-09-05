@@ -212,6 +212,7 @@ async def _handle_text(raw: str, ws: web.WebSocketResponse, context: ServerConte
                 buffered_amount=_validated_int(
                     message.get("bufferedAmount", 0), 0, 2**31 - 1, "bufferedAmount"
                 ),
+                capture_mode=str(message.get("captureMode", ""))[:32] or None,
             )
         elif msg_type == "pong":
             return

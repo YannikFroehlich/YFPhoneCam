@@ -23,6 +23,15 @@ let encodeSamples = 0;
 const canvas = document.createElement("canvas");
 const context = canvas.getContext("2d", { alpha: false });
 
+// Reading frames straight from the track (bypassing the <video> element's
+// display/compositing pipeline) can avoid a GPU readback stall that a fixed
+// per-call encode-time floor pointed to on at least one real device. Falls
+// back to the <video>+canvas path below when unsupported.
+const offscreen = typeof OffscreenCanvas !== "undefined" ? new OffscreenCanvas(1, 1) : null;
+const offscreenCtx = offscreen ? offscreen.getContext("2d", { alpha: false }) : null;
+let frameReader = null;
+let latestFrame = null;
+
 function setStatus(text, kind = "") {
   $("status").textContent = text;
   $("status").dataset.kind = kind;
@@ -87,6 +96,51 @@ async function listCameras(socket = ws) {
   return cameras;
 }
 
+function useFrameProcessor() {
+  return Boolean(frameReader) && Boolean(offscreen) && Boolean(offscreenCtx);
+}
+
+async function pumpFrames(reader) {
+  try {
+    while (frameReader === reader) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      if (frameReader !== reader) {
+        value.close();
+        break;
+      }
+      if (latestFrame) latestFrame.close();
+      latestFrame = value;
+    }
+  } catch (_error) {
+    // Reader canceled or track ended; nothing to clean up beyond below.
+  }
+}
+
+function teardownFrameProcessor() {
+  if (frameReader) {
+    const reader = frameReader;
+    frameReader = null;
+    reader.cancel().catch(() => {});
+  }
+  if (latestFrame) {
+    latestFrame.close();
+    latestFrame = null;
+  }
+}
+
+function setupFrameProcessor(track) {
+  teardownFrameProcessor();
+  if (typeof MediaStreamTrackProcessor === "undefined" || !offscreen || !offscreenCtx) return;
+  try {
+    const processor = new MediaStreamTrackProcessor({ track });
+    frameReader = processor.readable.getReader();
+    void pumpFrames(frameReader);
+  } catch (_error) {
+    frameReader = null;
+  }
+}
+
 function captureConstraints(capture, deviceId) {
   return {
     video: {
@@ -117,6 +171,7 @@ async function replaceCamera(capture = config, deviceId = null) {
   stream = newStream;
   if (oldStream) oldStream.getTracks().forEach((track) => track.stop());
   config = { ...config, ...capture, camera_id: deviceId || capture.camera_id || null };
+  setupFrameProcessor(stream.getVideoTracks()[0]);
   await listCameras();
   return stream.getVideoTracks()[0].getSettings();
 }
@@ -228,9 +283,7 @@ function scheduleReconnect() {
   reconnectDelay = Math.min(reconnectDelay * 2, 5000);
 }
 
-function drawFitted(ctx, video, targetWidth, targetHeight) {
-  const sourceWidth = video.videoWidth;
-  const sourceHeight = video.videoHeight;
+function drawFitted(ctx, source, sourceWidth, sourceHeight, targetWidth, targetHeight) {
   const scale = Math.min(targetWidth / sourceWidth, targetHeight / sourceHeight);
   const width = Math.max(1, Math.round(sourceWidth * scale));
   const height = Math.max(1, Math.round(sourceHeight * scale));
@@ -238,7 +291,38 @@ function drawFitted(ctx, video, targetWidth, targetHeight) {
   const top = Math.floor((targetHeight - height) / 2);
   ctx.fillStyle = "#000";
   ctx.fillRect(0, 0, targetWidth, targetHeight);
-  ctx.drawImage(video, left, top, width, height);
+  ctx.drawImage(source, left, top, width, height);
+}
+
+function captureNextFrame(video, targetWidth, targetHeight) {
+  // The camera may ignore requested width/height and keep streaming at its
+  // native resolution, so downscale here rather than trust the negotiated
+  // capture size — otherwise JPEG-encoding a much larger frame every tick
+  // becomes the bottleneck regardless of the configured resolution.
+  if (useFrameProcessor()) {
+    const frame = latestFrame;
+    if (!frame) return false;
+    latestFrame = null;
+    offscreen.width = targetWidth;
+    offscreen.height = targetHeight;
+    drawFitted(offscreenCtx, frame, frame.displayWidth, frame.displayHeight, targetWidth, targetHeight);
+    frame.close();
+    return true;
+  }
+  if (video.videoWidth && video.videoHeight) {
+    canvas.width = targetWidth;
+    canvas.height = targetHeight;
+    drawFitted(context, video, video.videoWidth, video.videoHeight, targetWidth, targetHeight);
+    return true;
+  }
+  return false;
+}
+
+function encodeSurface(quality) {
+  if (useFrameProcessor()) {
+    return offscreen.convertToBlob({ type: "image/jpeg", quality });
+  }
+  return new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", quality));
 }
 
 function startSendLoop(socket) {
@@ -249,49 +333,44 @@ function startSendLoop(socket) {
 
   const tick = () => {
     if (!running || socket.readyState !== WebSocket.OPEN) return;
-    if (video.videoWidth && video.videoHeight) {
-      // The camera may ignore requested width/height and keep streaming at its
-      // native resolution, so downscale here rather than trust the negotiated
-      // capture size — otherwise JPEG-encoding a much larger frame every tick
-      // becomes the bottleneck regardless of the configured resolution.
-      canvas.width = config.width;
-      canvas.height = config.height;
-      drawFitted(context, video, canvas.width, canvas.height);
+    if (captureNextFrame(video, config.width, config.height)) {
       capturedFrames += 1;
 
       if (!encodingInFlight && socket.bufferedAmount < bufferedThreshold) {
         encodingInFlight = true;
         const encodeStart = performance.now();
-        canvas.toBlob((blob) => {
-          if (!blob) {
-            encodingInFlight = false;
-            droppedFrames += 1;
-            return;
-          }
-          blob.arrayBuffer().then((jpegBuffer) => {
-            encodeMsTotal += performance.now() - encodeStart;
-            encodeSamples += 1;
-            if (!running || ws !== socket || socket.readyState !== WebSocket.OPEN ||
-                socket.bufferedAmount >= bufferedThreshold) {
+        encodeSurface((config.jpeg_quality || 80) / 100)
+          .then((blob) => {
+            if (!blob) {
               droppedFrames += 1;
-              droppedBackpressureFrames += 1;
               return;
             }
-            const header = new ArrayBuffer(12);
-            const view = new DataView(header);
-            view.setUint32(0, sequence++, true);
-            view.setBigUint64(4, BigInt(Date.now()), true);
-            const packet = new Uint8Array(12 + jpegBuffer.byteLength);
-            packet.set(new Uint8Array(header), 0);
-            packet.set(new Uint8Array(jpegBuffer), 12);
-            socket.send(packet);
-            sentFrames += 1;
-          }).catch(() => {
+            return blob.arrayBuffer().then((jpegBuffer) => {
+              encodeMsTotal += performance.now() - encodeStart;
+              encodeSamples += 1;
+              if (!running || ws !== socket || socket.readyState !== WebSocket.OPEN ||
+                  socket.bufferedAmount >= bufferedThreshold) {
+                droppedFrames += 1;
+                droppedBackpressureFrames += 1;
+                return;
+              }
+              const header = new ArrayBuffer(12);
+              const view = new DataView(header);
+              view.setUint32(0, sequence++, true);
+              view.setBigUint64(4, BigInt(Date.now()), true);
+              const packet = new Uint8Array(12 + jpegBuffer.byteLength);
+              packet.set(new Uint8Array(header), 0);
+              packet.set(new Uint8Array(jpegBuffer), 12);
+              socket.send(packet);
+              sentFrames += 1;
+            });
+          })
+          .catch(() => {
             droppedFrames += 1;
-          }).finally(() => {
+          })
+          .finally(() => {
             encodingInFlight = false;
           });
-        }, "image/jpeg", (config.jpeg_quality || 80) / 100);
       } else {
         droppedFrames += 1;
         if (encodingInFlight) droppedBusyFrames += 1;
@@ -333,6 +412,7 @@ function stop() {
   stopSendLoop();
   if (ws) ws.close();
   ws = null;
+  teardownFrameProcessor();
   if (stream) stream.getTracks().forEach((track) => track.stop());
   stream = null;
   $("localVideo").srcObject = null;
@@ -351,6 +431,7 @@ setInterval(() => {
       droppedBackpressureFrames,
       avgEncodeMs: encodeSamples > 0 ? encodeMsTotal / encodeSamples : null,
       bufferedAmount: ws.bufferedAmount,
+      captureMode: useFrameProcessor() ? "track-processor" : "video-element",
     }));
   }
 }, 2000);
