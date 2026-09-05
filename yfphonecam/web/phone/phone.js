@@ -88,8 +88,8 @@ function captureConstraints(capture, deviceId) {
     video: {
       deviceId: deviceId ? { exact: deviceId } : undefined,
       facingMode: deviceId ? undefined : { ideal: "environment" },
-      width: { ideal: capture.width },
-      height: { ideal: capture.height },
+      width: { ideal: capture.width, max: capture.width },
+      height: { ideal: capture.height, max: capture.height },
       frameRate: { ideal: capture.fps, max: capture.fps },
     },
     audio: false,
