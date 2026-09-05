@@ -45,6 +45,10 @@ class AppState:
         self.captured_frames = 0
         self.sent_frames = 0
         self.dropped_frames = 0
+        self.dropped_busy_frames = 0
+        self.dropped_backpressure_frames = 0
+        self.avg_encode_ms: float | None = None
+        self.buffered_amount_bytes = 0
         self.decoded_frames = 0
 
         self.adb_devices: list[dict[str, str]] = []
@@ -128,11 +132,24 @@ class AppState:
             self.last_frame_at = time.monotonic()
             self.decoded_frames += 1
 
-    def update_client_stats(self, captured: int, sent: int, dropped: int) -> None:
+    def update_client_stats(
+        self,
+        captured: int,
+        sent: int,
+        dropped: int,
+        dropped_busy: int = 0,
+        dropped_backpressure: int = 0,
+        avg_encode_ms: float | None = None,
+        buffered_amount: int = 0,
+    ) -> None:
         with self._lock:
             self.captured_frames = max(0, captured)
             self.sent_frames = max(0, sent)
             self.dropped_frames = max(0, dropped)
+            self.dropped_busy_frames = max(0, dropped_busy)
+            self.dropped_backpressure_frames = max(0, dropped_backpressure)
+            self.avg_encode_ms = avg_encode_ms
+            self.buffered_amount_bytes = max(0, buffered_amount)
 
     def set_virtualcam_status(
         self, active: bool, backend: str | None = None, error: str | None = None
@@ -172,6 +189,12 @@ class AppState:
                 "captured_frames": self.captured_frames,
                 "sent_frames": self.sent_frames,
                 "dropped_frames": self.dropped_frames,
+                "dropped_busy_frames": self.dropped_busy_frames,
+                "dropped_backpressure_frames": self.dropped_backpressure_frames,
+                "avg_encode_ms": round(self.avg_encode_ms, 1)
+                if self.avg_encode_ms is not None
+                else None,
+                "buffered_amount_bytes": self.buffered_amount_bytes,
                 "decoded_frames": self.decoded_frames,
                 "virtualcam_active": self.virtualcam_active,
                 "virtualcam_backend": self.virtualcam_backend,

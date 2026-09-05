@@ -15,6 +15,10 @@ let sequence = 0;
 let capturedFrames = 0;
 let sentFrames = 0;
 let droppedFrames = 0;
+let droppedBusyFrames = 0;
+let droppedBackpressureFrames = 0;
+let encodeMsTotal = 0;
+let encodeSamples = 0;
 
 const canvas = document.createElement("canvas");
 const context = canvas.getContext("2d", { alpha: false });
@@ -240,6 +244,7 @@ function startSendLoop(socket) {
 
       if (!encodingInFlight && socket.bufferedAmount < bufferedThreshold) {
         encodingInFlight = true;
+        const encodeStart = performance.now();
         canvas.toBlob((blob) => {
           if (!blob) {
             encodingInFlight = false;
@@ -247,9 +252,12 @@ function startSendLoop(socket) {
             return;
           }
           blob.arrayBuffer().then((jpegBuffer) => {
+            encodeMsTotal += performance.now() - encodeStart;
+            encodeSamples += 1;
             if (!running || ws !== socket || socket.readyState !== WebSocket.OPEN ||
                 socket.bufferedAmount >= bufferedThreshold) {
               droppedFrames += 1;
+              droppedBackpressureFrames += 1;
               return;
             }
             const header = new ArrayBuffer(12);
@@ -269,6 +277,8 @@ function startSendLoop(socket) {
         }, "image/jpeg", (config.jpeg_quality || 80) / 100);
       } else {
         droppedFrames += 1;
+        if (encodingInFlight) droppedBusyFrames += 1;
+        else droppedBackpressureFrames += 1;
       }
     }
     sendTimer = setTimeout(tick, intervalMs);
@@ -315,7 +325,16 @@ function stop() {
 
 setInterval(() => {
   if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ type: "stats", capturedFrames, sentFrames, droppedFrames }));
+    ws.send(JSON.stringify({
+      type: "stats",
+      capturedFrames,
+      sentFrames,
+      droppedFrames,
+      droppedBusyFrames,
+      droppedBackpressureFrames,
+      avgEncodeMs: encodeSamples > 0 ? encodeMsTotal / encodeSamples : null,
+      bufferedAmount: ws.bufferedAmount,
+    }));
   }
 }, 2000);
 

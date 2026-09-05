@@ -8,6 +8,10 @@ const LABELS = {
   captured_frames: "Captured frames",
   sent_frames: "Sent frames",
   dropped_frames: "Dropped frames",
+  dropped_busy_frames: "  - dropped (phone still encoding)",
+  dropped_backpressure_frames: "  - dropped (network backlog)",
+  avg_encode_ms: "Avg phone encode time (ms)",
+  buffered_amount_bytes: "WebSocket send backlog (bytes)",
   decoded_frames: "Decoded frames",
   virtualcam_active: "Virtual camera active",
   virtualcam_backend: "Virtual camera backend",
@@ -15,7 +19,14 @@ const LABELS = {
   server_uptime_s: "Server uptime (s)",
 };
 
-const RATE_KEYS = new Set(["captured_frames", "sent_frames", "dropped_frames", "decoded_frames"]);
+const RATE_KEYS = new Set([
+  "captured_frames",
+  "sent_frames",
+  "dropped_frames",
+  "dropped_busy_frames",
+  "dropped_backpressure_frames",
+  "decoded_frames",
+]);
 
 let previous = null;
 

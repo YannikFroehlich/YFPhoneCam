@@ -188,6 +188,7 @@ async def _handle_text(raw: str, ws: web.WebSocketResponse, context: ServerConte
                 log.warning("Phone rejected configuration: %s", message.get("error", "unknown"))
 
         elif msg_type == "stats":
+            avg_encode_ms = message.get("avgEncodeMs")
             state.update_client_stats(
                 captured=_validated_int(
                     message.get("capturedFrames", 0), 0, 2**31 - 1, "capturedFrames"
@@ -195,6 +196,21 @@ async def _handle_text(raw: str, ws: web.WebSocketResponse, context: ServerConte
                 sent=_validated_int(message.get("sentFrames", 0), 0, 2**31 - 1, "sentFrames"),
                 dropped=_validated_int(
                     message.get("droppedFrames", 0), 0, 2**31 - 1, "droppedFrames"
+                ),
+                dropped_busy=_validated_int(
+                    message.get("droppedBusyFrames", 0), 0, 2**31 - 1, "droppedBusyFrames"
+                ),
+                dropped_backpressure=_validated_int(
+                    message.get("droppedBackpressureFrames", 0),
+                    0,
+                    2**31 - 1,
+                    "droppedBackpressureFrames",
+                ),
+                avg_encode_ms=_validated_float(avg_encode_ms, 0, 10_000, "avgEncodeMs")
+                if isinstance(avg_encode_ms, (int, float))
+                else None,
+                buffered_amount=_validated_int(
+                    message.get("bufferedAmount", 0), 0, 2**31 - 1, "bufferedAmount"
                 ),
             )
         elif msg_type == "pong":
