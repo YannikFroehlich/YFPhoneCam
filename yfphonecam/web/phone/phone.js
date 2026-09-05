@@ -228,6 +228,19 @@ function scheduleReconnect() {
   reconnectDelay = Math.min(reconnectDelay * 2, 5000);
 }
 
+function drawFitted(ctx, video, targetWidth, targetHeight) {
+  const sourceWidth = video.videoWidth;
+  const sourceHeight = video.videoHeight;
+  const scale = Math.min(targetWidth / sourceWidth, targetHeight / sourceHeight);
+  const width = Math.max(1, Math.round(sourceWidth * scale));
+  const height = Math.max(1, Math.round(sourceHeight * scale));
+  const left = Math.floor((targetWidth - width) / 2);
+  const top = Math.floor((targetHeight - height) / 2);
+  ctx.fillStyle = "#000";
+  ctx.fillRect(0, 0, targetWidth, targetHeight);
+  ctx.drawImage(video, left, top, width, height);
+}
+
 function startSendLoop(socket) {
   stopSendLoop();
   const intervalMs = 1000 / Math.max(1, config.fps || 30);
@@ -237,9 +250,13 @@ function startSendLoop(socket) {
   const tick = () => {
     if (!running || socket.readyState !== WebSocket.OPEN) return;
     if (video.videoWidth && video.videoHeight) {
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      context.drawImage(video, 0, 0);
+      // The camera may ignore requested width/height and keep streaming at its
+      // native resolution, so downscale here rather than trust the negotiated
+      // capture size — otherwise JPEG-encoding a much larger frame every tick
+      // becomes the bottleneck regardless of the configured resolution.
+      canvas.width = config.width;
+      canvas.height = config.height;
+      drawFitted(context, video, canvas.width, canvas.height);
       capturedFrames += 1;
 
       if (!encodingInFlight && socket.bufferedAmount < bufferedThreshold) {
