@@ -15,7 +15,11 @@ const LABELS = {
   server_uptime_s: "Server uptime (s)",
 };
 
-function renderValue(key, value) {
+const RATE_KEYS = new Set(["captured_frames", "sent_frames", "dropped_frames", "decoded_frames"]);
+
+let previous = null;
+
+function renderValue(key, value, rate) {
   if (value === null || value === undefined) return "-";
   if (typeof value === "boolean") {
     const span = document.createElement("span");
@@ -24,6 +28,7 @@ function renderValue(key, value) {
     return span;
   }
   if (Array.isArray(value)) return value.join(" x ");
+  if (rate !== null) return `${value} (${rate.toFixed(1)} fps)`;
   return String(value);
 }
 
@@ -31,6 +36,9 @@ async function refresh() {
   try {
     const res = await fetch("/api/status");
     const data = await res.json();
+    const now = performance.now();
+    const elapsedS = previous ? (now - previous.now) / 1000 : 0;
+
     const table = document.getElementById("statusTable");
     table.innerHTML = "";
     for (const [key, label] of Object.entries(LABELS)) {
@@ -39,13 +47,19 @@ async function refresh() {
       keyCell.className = "key";
       keyCell.textContent = label;
       const valCell = document.createElement("td");
-      const rendered = renderValue(key, data[key]);
+
+      let rate = null;
+      if (RATE_KEYS.has(key) && previous && elapsedS > 0 && typeof data[key] === "number") {
+        rate = (data[key] - previous.data[key]) / elapsedS;
+      }
+      const rendered = renderValue(key, data[key], rate);
       if (typeof rendered === "string") valCell.textContent = rendered;
       else valCell.appendChild(rendered);
       row.appendChild(keyCell);
       row.appendChild(valCell);
       table.appendChild(row);
     }
+    previous = { data, now };
   } catch (e) {
     console.error("Status request failed", e);
   }
