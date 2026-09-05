@@ -19,6 +19,9 @@ let droppedBusyFrames = 0;
 let droppedBackpressureFrames = 0;
 let encodeMsTotal = 0;
 let encodeSamples = 0;
+let nextEncodeAt = 0;
+
+const BUFFERED_THRESHOLD = 500_000;
 
 const canvas = document.createElement("canvas");
 const context = canvas.getContext("2d", { alpha: false });
@@ -109,8 +112,19 @@ async function pumpFrames(reader) {
         value.close();
         break;
       }
-      if (latestFrame) latestFrame.close();
+      capturedFrames += 1;
+      if (latestFrame) {
+        // Superseded before it could be encoded. That is only a real loss when
+        // the encoder was the thing holding it up; otherwise it is just the
+        // camera running ahead of the configured rate.
+        latestFrame.close();
+        if (encodingInFlight) {
+          droppedFrames += 1;
+          droppedBusyFrames += 1;
+        }
+      }
       latestFrame = value;
+      if (ws) tryEncodeFrame(ws);
     }
   } catch (_error) {
     // Reader canceled or track ended; nothing to clean up beyond below.
@@ -141,23 +155,40 @@ function setupFrameProcessor(track) {
   }
 }
 
-function captureConstraints(capture, deviceId) {
+function captureConstraints(capture, deviceId, pinFrameRate) {
+  // frameRate needs a lower bound, not just ideal/max: with the floor left open
+  // the camera can settle on a range like [10, 30] and run at its minimum in
+  // dim light to lengthen exposure, which arrives here as a stuck-slow stream.
+  const frameRate = pinFrameRate
+    ? { min: capture.fps, ideal: capture.fps, max: capture.fps }
+    : { ideal: capture.fps, max: capture.fps };
   return {
     video: {
       deviceId: deviceId ? { exact: deviceId } : undefined,
       facingMode: deviceId ? undefined : { ideal: "environment" },
       width: { ideal: capture.width, max: capture.width },
       height: { ideal: capture.height, max: capture.height },
-      frameRate: { ideal: capture.fps, max: capture.fps },
+      frameRate,
     },
     audio: false,
   };
 }
 
+async function openStream(capture, deviceId) {
+  try {
+    return await navigator.mediaDevices.getUserMedia(captureConstraints(capture, deviceId, true));
+  } catch (error) {
+    // A pinned frame rate is a hard constraint, so fall back to the hint-only
+    // form instead of failing to open the camera at all.
+    if (error && error.name === "OverconstrainedError") {
+      return navigator.mediaDevices.getUserMedia(captureConstraints(capture, deviceId, false));
+    }
+    throw error;
+  }
+}
+
 async function replaceCamera(capture = config, deviceId = null) {
-  const newStream = await navigator.mediaDevices.getUserMedia(
-    captureConstraints(capture, deviceId || capture.camera_id || undefined)
-  );
+  const newStream = await openStream(capture, deviceId || capture.camera_id || undefined);
   const oldStream = stream;
   const video = $("localVideo");
   video.srcObject = newStream;
@@ -294,6 +325,13 @@ function drawFitted(ctx, source, sourceWidth, sourceHeight, targetWidth, targetH
   ctx.drawImage(source, left, top, width, height);
 }
 
+function resizeSurface(surface, width, height) {
+  // Assigning width/height reallocates and clears the backing store even when
+  // the value is unchanged, so only touch it on an actual size change.
+  if (surface.width !== width) surface.width = width;
+  if (surface.height !== height) surface.height = height;
+}
+
 function captureNextFrame(video, targetWidth, targetHeight) {
   // The camera may ignore requested width/height and keep streaming at its
   // native resolution, so downscale here rather than trust the negotiated
@@ -303,15 +341,13 @@ function captureNextFrame(video, targetWidth, targetHeight) {
     const frame = latestFrame;
     if (!frame) return false;
     latestFrame = null;
-    offscreen.width = targetWidth;
-    offscreen.height = targetHeight;
+    resizeSurface(offscreen, targetWidth, targetHeight);
     drawFitted(offscreenCtx, frame, frame.displayWidth, frame.displayHeight, targetWidth, targetHeight);
     frame.close();
     return true;
   }
   if (video.videoWidth && video.videoHeight) {
-    canvas.width = targetWidth;
-    canvas.height = targetHeight;
+    resizeSurface(canvas, targetWidth, targetHeight);
     drawFitted(context, video, video.videoWidth, video.videoHeight, targetWidth, targetHeight);
     return true;
   }
@@ -325,61 +361,92 @@ function encodeSurface(quality) {
   return new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", quality));
 }
 
+function frameIntervalMs() {
+  return 1000 / Math.max(1, config.fps || 30);
+}
+
+function armSendTimer(socket, delayMs) {
+  clearTimeout(sendTimer);
+  sendTimer = setTimeout(() => {
+    sendTimer = null;
+    tryEncodeFrame(socket);
+  }, Math.max(1, delayMs));
+}
+
+function sendEncodedFrame(socket, jpegBuffer) {
+  const header = new ArrayBuffer(12);
+  const view = new DataView(header);
+  view.setUint32(0, sequence++, true);
+  view.setBigUint64(4, BigInt(Date.now()), true);
+  const packet = new Uint8Array(12 + jpegBuffer.byteLength);
+  packet.set(new Uint8Array(header), 0);
+  packet.set(new Uint8Array(jpegBuffer), 12);
+  socket.send(packet);
+  sentFrames += 1;
+}
+
+// Encode as soon as a frame is ready and the encoder is free, instead of on a
+// fixed timer grid. A grid quantizes throughput to integer divisions of the
+// configured rate (30 -> 15 -> 10 fps), so a frame that overruns its slot by a
+// millisecond costs a whole slot; here it only delays itself.
+function tryEncodeFrame(socket) {
+  if (!running || ws !== socket || socket.readyState !== WebSocket.OPEN) return;
+  if (encodingInFlight) return; // the in-flight encode calls back in when it settles
+
+  const now = performance.now();
+  if (now < nextEncodeAt) {
+    armSendTimer(socket, nextEncodeAt - now);
+    return;
+  }
+  if (socket.bufferedAmount >= BUFFERED_THRESHOLD) {
+    droppedFrames += 1;
+    droppedBackpressureFrames += 1;
+    armSendTimer(socket, frameIntervalMs());
+    return;
+  }
+  if (!captureNextFrame($("localVideo"), config.width, config.height)) {
+    // No fresh frame yet. The track processor wakes us on arrival; the
+    // <video> fallback has no such signal and needs the retry timer.
+    armSendTimer(socket, frameIntervalMs());
+    return;
+  }
+  // The track-processor path already counted this frame as the camera delivered it.
+  if (!useFrameProcessor()) capturedFrames += 1;
+
+  nextEncodeAt = now + frameIntervalMs();
+  encodingInFlight = true;
+  const encodeStart = performance.now();
+  encodeSurface((config.jpeg_quality || 80) / 100)
+    .then((blob) => {
+      if (!blob) {
+        droppedFrames += 1;
+        return;
+      }
+      return blob.arrayBuffer().then((jpegBuffer) => {
+        encodeMsTotal += performance.now() - encodeStart;
+        encodeSamples += 1;
+        if (!running || ws !== socket || socket.readyState !== WebSocket.OPEN ||
+            socket.bufferedAmount >= BUFFERED_THRESHOLD) {
+          droppedFrames += 1;
+          droppedBackpressureFrames += 1;
+          return;
+        }
+        sendEncodedFrame(socket, jpegBuffer);
+      });
+    })
+    .catch(() => {
+      droppedFrames += 1;
+    })
+    .finally(() => {
+      encodingInFlight = false;
+      tryEncodeFrame(socket);
+    });
+}
+
 function startSendLoop(socket) {
   stopSendLoop();
-  const intervalMs = 1000 / Math.max(1, config.fps || 30);
-  const bufferedThreshold = 500_000;
-  const video = $("localVideo");
-
-  const tick = () => {
-    if (!running || socket.readyState !== WebSocket.OPEN) return;
-    if (captureNextFrame(video, config.width, config.height)) {
-      capturedFrames += 1;
-
-      if (!encodingInFlight && socket.bufferedAmount < bufferedThreshold) {
-        encodingInFlight = true;
-        const encodeStart = performance.now();
-        encodeSurface((config.jpeg_quality || 80) / 100)
-          .then((blob) => {
-            if (!blob) {
-              droppedFrames += 1;
-              return;
-            }
-            return blob.arrayBuffer().then((jpegBuffer) => {
-              encodeMsTotal += performance.now() - encodeStart;
-              encodeSamples += 1;
-              if (!running || ws !== socket || socket.readyState !== WebSocket.OPEN ||
-                  socket.bufferedAmount >= bufferedThreshold) {
-                droppedFrames += 1;
-                droppedBackpressureFrames += 1;
-                return;
-              }
-              const header = new ArrayBuffer(12);
-              const view = new DataView(header);
-              view.setUint32(0, sequence++, true);
-              view.setBigUint64(4, BigInt(Date.now()), true);
-              const packet = new Uint8Array(12 + jpegBuffer.byteLength);
-              packet.set(new Uint8Array(header), 0);
-              packet.set(new Uint8Array(jpegBuffer), 12);
-              socket.send(packet);
-              sentFrames += 1;
-            });
-          })
-          .catch(() => {
-            droppedFrames += 1;
-          })
-          .finally(() => {
-            encodingInFlight = false;
-          });
-      } else {
-        droppedFrames += 1;
-        if (encodingInFlight) droppedBusyFrames += 1;
-        else droppedBackpressureFrames += 1;
-      }
-    }
-    sendTimer = setTimeout(tick, intervalMs);
-  };
-  tick();
+  nextEncodeAt = 0;
+  tryEncodeFrame(socket);
 }
 
 function stopSendLoop() {
