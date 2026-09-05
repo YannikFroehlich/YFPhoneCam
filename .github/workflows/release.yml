@@ -28,10 +28,12 @@ jobs:
           python-version: "3.13"
           cache: pip
           cache-dependency-path: requirements-dev.lock
+      - name: Create virtual environment
+        run: python -m venv .venv
       - name: Install verified dependencies
-        run: python -m pip install --require-hashes -r requirements-dev.lock
+        run: .venv\Scripts\python.exe -m pip install --require-hashes -r requirements-dev.lock
       - name: Verify source version
-        run: python scripts/check_version.py "$env:RELEASE_TAG"
+        run: .venv\Scripts\python.exe scripts/check_version.py "$env:RELEASE_TAG"
       - name: Install pinned Inno Setup compiler
         shell: pwsh
         run: ./scripts/install_inno_setup.ps1
