@@ -3,6 +3,12 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Tag to release (e.g. v0.1.0-beta.2)
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -11,6 +17,8 @@ jobs:
   build:
     runs-on: windows-latest
     timeout-minutes: 45
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
     steps:
       - name: Check out repository
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -23,17 +31,17 @@ jobs:
       - name: Install verified dependencies
         run: python -m pip install --require-hashes -r requirements-dev.lock
       - name: Verify source version
-        run: python scripts/check_version.py "${{ github.ref_name }}"
+        run: python scripts/check_version.py "$env:RELEASE_TAG"
       - name: Install pinned Inno Setup compiler
         shell: pwsh
         run: ./scripts/install_inno_setup.ps1
       - name: Build application and installer
         shell: pwsh
-        run: ./scripts/build_release.ps1 -Tag "${{ github.ref_name }}"
+        run: ./scripts/build_release.ps1 -Tag "$env:RELEASE_TAG"
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: YFPhoneCam-${{ github.ref_name }}
+          name: YFPhoneCam-${{ env.RELEASE_TAG }}
           path: installer/output/*
           if-no-files-found: error
       - name: Create draft GitHub Release
@@ -41,8 +49,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $version = "${{ github.ref_name }}".TrimStart("v")
-          gh release create "${{ github.ref_name }}" `
+          $version = "$env:RELEASE_TAG".TrimStart("v")
+          gh release create "$env:RELEASE_TAG" `
             "installer/output/YFPhoneCam-Setup-$version.exe" `
             "installer/output/YFPhoneCam-Setup-$version.exe.sha256" `
             "installer/output/YFPhoneCam-$version.cdx.json" `
